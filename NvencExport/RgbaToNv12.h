@@ -1,31 +1,24 @@
-// NvencExport/RgbaToNv12.h
-
+// RgbaToNv12.h
 #pragma once
 
-#include <cuda_runtime.h>
-#include <stdint.h>
+#include <cstdint>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-    // GPU ÄÚ´æ°æ±¾
-    cudaError_t ConvertRgbaToNv12_GPU(
-        const uint8_t* d_rgba,
-        uint8_t* d_nv12,
+    void LaunchRGBAtoNV12Direct(
+        unsigned long long d_rgba,
+        unsigned long long dst_y_ptr,
+        unsigned long long dst_uv_ptr,
         int width,
         int height,
-        cudaStream_t stream = 0);
+        int dst_pitch,
+        void* cuda_context
+    );
 
-    // CPU¡úGPU °æ±¾
-    cudaError_t ConvertRgbaToNv12_HostToDevice(
-        const uint8_t* h_rgba,
-        uint8_t* d_nv12,
-        uint8_t* d_rgba_temp,
-        int width,
-        int height,
-        cudaStream_t stream = 0);
+    void CleanupRGBAtoNV12();
 
 #ifdef __cplusplus
 }
-#endif#pragma once
+#endif

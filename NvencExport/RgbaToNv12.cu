@@ -1,140 +1,225 @@
-// NvencExport/RgbaToNv12.cu
+// RgbaToNv12.cu
+#include <cuda.h>
+#include <cstdint>
+#include <cstdio>
 
-#include <cuda_runtime.h>
-#include <stdint.h>
+// PTX 浠ｇ爜 - 鍏煎 sm_89 (RTX 40 绯诲垪)
+static const char* g_ptxSource = R"(
+.version 8.0
+.target sm_89
+.address_size 64
 
-// CUDA 内核：RGBA 转 NV12
-__global__ void RgbaToNv12Kernel(
-    const uint8_t* __restrict__ rgba,
-    uint8_t* __restrict__ yPlane,
-    uint8_t* __restrict__ uvPlane,
-    int width,
-    int height)
+.visible .entry RGBAtoNV12Kernel(
+    .param .u64 param_rgba,
+    .param .u64 param_dst_y,
+    .param .u64 param_dst_uv,
+    .param .u32 param_width,
+    .param .u32 param_height,
+    .param .u32 param_pitch
+)
 {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    .reg .pred  %p<4>;
+    .reg .b32   %r<40>;
+    .reg .b64   %rd<12>;
 
-    if (x >= width || y >= height) return;
+    ld.param.u64    %rd1, [param_rgba];
+    ld.param.u64    %rd2, [param_dst_y];
+    ld.param.u64    %rd3, [param_dst_uv];
+    ld.param.u32    %r1, [param_width];
+    ld.param.u32    %r2, [param_height];
+    ld.param.u32    %r3, [param_pitch];
 
-    // 读取 RGBA
-    int rgbaIdx = (y * width + x) * 4;
-    int r = rgba[rgbaIdx + 0];
-    int g = rgba[rgbaIdx + 1];
-    int b = rgba[rgbaIdx + 2];
+    mov.u32         %r4, %ctaid.x;
+    mov.u32         %r5, %ntid.x;
+    mov.u32         %r6, %tid.x;
+    mad.lo.s32      %r7, %r4, %r5, %r6;
 
-    // 计算 Y（每个像素都有）
-    int Y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-    Y = min(max(Y, 0), 255);
-    yPlane[y * width + x] = (uint8_t)Y;
+    mov.u32         %r8, %ctaid.y;
+    mov.u32         %r9, %ntid.y;
+    mov.u32         %r10, %tid.y;
+    mad.lo.s32      %r11, %r8, %r9, %r10;
 
-    // 计算 UV（每 2x2 像素块共享一个 UV）
-    if ((x % 2 == 0) && (y % 2 == 0)) {
-        int U = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
-        int V = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
-        U = min(max(U, 0), 255);
-        V = min(max(V, 0), 255);
+    setp.ge.s32     %p1, %r7, %r1;
+    setp.ge.s32     %p2, %r11, %r2;
+    or.pred         %p3, %p1, %p2;
+    @%p3 bra        DONE;
 
-        int uvIdx = (y / 2) * width + (x / 2) * 2;
-        uvPlane[uvIdx + 0] = (uint8_t)U;
-        uvPlane[uvIdx + 1] = (uint8_t)V;
-    }
+    mad.lo.s32      %r12, %r11, %r1, %r7;
+    shl.b32         %r13, %r12, 2;
+    cvt.u64.u32     %rd4, %r13;
+    add.u64         %rd5, %rd1, %rd4;
+
+    ld.global.u8    %r14, [%rd5];
+    ld.global.u8    %r15, [%rd5+1];
+    ld.global.u8    %r16, [%rd5+2];
+
+    mul.lo.s32      %r17, %r14, 66;
+    mul.lo.s32      %r18, %r15, 129;
+    mul.lo.s32      %r19, %r16, 25;
+    add.s32         %r20, %r17, %r18;
+    add.s32         %r20, %r20, %r19;
+    add.s32         %r20, %r20, 128;
+    shr.s32         %r20, %r20, 8;
+    add.s32         %r20, %r20, 16;
+    max.s32         %r20, %r20, 0;
+    min.s32         %r20, %r20, 255;
+
+    mad.lo.s32      %r21, %r11, %r3, %r7;
+    cvt.u64.u32     %rd6, %r21;
+    add.u64         %rd7, %rd2, %rd6;
+    st.global.u8    [%rd7], %r20;
+
+    and.b32         %r22, %r7, 1;
+    and.b32         %r23, %r11, 1;
+    or.b32          %r24, %r22, %r23;
+    setp.ne.s32     %p1, %r24, 0;
+    @%p1 bra        DONE;
+
+    mul.lo.s32      %r25, %r14, -38;
+    mul.lo.s32      %r26, %r15, -74;
+    mul.lo.s32      %r27, %r16, 112;
+    add.s32         %r28, %r25, %r26;
+    add.s32         %r28, %r28, %r27;
+    add.s32         %r28, %r28, 128;
+    shr.s32         %r28, %r28, 8;
+    add.s32         %r28, %r28, 128;
+    max.s32         %r28, %r28, 0;
+    min.s32         %r28, %r28, 255;
+
+    mul.lo.s32      %r29, %r14, 112;
+    mul.lo.s32      %r30, %r15, -94;
+    mul.lo.s32      %r31, %r16, -18;
+    add.s32         %r32, %r29, %r30;
+    add.s32         %r32, %r32, %r31;
+    add.s32         %r32, %r32, 128;
+    shr.s32         %r32, %r32, 8;
+    add.s32         %r32, %r32, 128;
+    max.s32         %r32, %r32, 0;
+    min.s32         %r32, %r32, 255;
+
+    shr.s32         %r33, %r11, 1;
+    mad.lo.s32      %r34, %r33, %r3, %r7;
+    cvt.u64.u32     %rd8, %r34;
+    add.u64         %rd9, %rd3, %rd8;
+
+    st.global.u8    [%rd9], %r28;
+    st.global.u8    [%rd9+1], %r32;
+
+DONE:
+    ret;
 }
+)";
 
-// 优化版本：使用共享内存，2x2 像素块平均计算 UV
-__global__ void RgbaToNv12KernelOptimized(
-    const uint8_t* __restrict__ rgba,
-    uint8_t* __restrict__ yPlane,
-    uint8_t* __restrict__ uvPlane,
-    int width,
-    int height)
+static CUmodule g_module = nullptr;
+static CUfunction g_kernel = nullptr;
+static bool g_initialized = false;
+
+static bool InitKernel(CUcontext ctx)
 {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (g_initialized && g_kernel != nullptr) {
+        return true;
+    }
 
-    if (x >= width || y >= height) return;
+    cuCtxSetCurrent(ctx);
 
-    // 读取 RGBA
-    int rgbaIdx = (y * width + x) * 4;
-    int r = rgba[rgbaIdx + 0];
-    int g = rgba[rgbaIdx + 1];
-    int b = rgba[rgbaIdx + 2];
+    // 浣跨敤 JIT 缂栬瘧閫夐」
+    CUjit_option options[] = {
+        CU_JIT_TARGET_FROM_CUCONTEXT,
+        CU_JIT_OPTIMIZATION_LEVEL
+    };
+    void* optionValues[] = {
+        nullptr,
+        (void*)4
+    };
 
-    // 计算并写入 Y
-    int Y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-    yPlane[y * width + x] = (uint8_t)min(max(Y, 0), 255);
+    CUresult result = cuModuleLoadDataEx(
+        &g_module,
+        g_ptxSource,
+        2,
+        options,
+        optionValues
+    );
 
-    // 只有 2x2 块的左上角像素计算 UV（使用 4 个像素的平均值）
-    if ((x % 2 == 0) && (y % 2 == 0) && (x + 1 < width) && (y + 1 < height)) {
-        int sumR = 0, sumG = 0, sumB = 0;
+    if (result != CUDA_SUCCESS) {
+        printf("  [ERROR] cuModuleLoadDataEx failed: %d\n", result);
+        printf("  [INFO] Trying cuModuleLoadData...\n");
 
-        // 采样 2x2 块的 4 个像素
-#pragma unroll
-        for (int dy = 0; dy < 2; dy++) {
-#pragma unroll
-            for (int dx = 0; dx < 2; dx++) {
-                int idx = ((y + dy) * width + (x + dx)) * 4;
-                sumR += rgba[idx + 0];
-                sumG += rgba[idx + 1];
-                sumB += rgba[idx + 2];
-            }
+        // 灏濊瘯涓嶅甫閫夐」
+        result = cuModuleLoadData(&g_module, g_ptxSource);
+        if (result != CUDA_SUCCESS) {
+            printf("  [ERROR] cuModuleLoadData also failed: %d\n", result);
+            return false;
         }
-
-        // 平均值
-        int avgR = sumR / 4;
-        int avgG = sumG / 4;
-        int avgB = sumB / 4;
-
-        int U = ((-38 * avgR - 74 * avgG + 112 * avgB + 128) >> 8) + 128;
-        int V = ((112 * avgR - 94 * avgG - 18 * avgB + 128) >> 8) + 128;
-
-        int uvIdx = (y / 2) * width + (x / 2) * 2;
-        uvPlane[uvIdx + 0] = (uint8_t)min(max(U, 0), 255);
-        uvPlane[uvIdx + 1] = (uint8_t)min(max(V, 0), 255);
     }
+
+    result = cuModuleGetFunction(&g_kernel, g_module, "RGBAtoNV12Kernel");
+    if (result != CUDA_SUCCESS) {
+        printf("  [ERROR] cuModuleGetFunction failed: %d\n", result);
+        cuModuleUnload(g_module);
+        g_module = nullptr;
+        return false;
+    }
+
+    g_initialized = true;
+    printf("  [INFO] GPU Kernel initialized successfully (PTX)\n");
+    return true;
 }
 
-// C++ 接口
-extern "C" {
+extern "C" void LaunchRGBAtoNV12Direct(
+    unsigned long long d_rgba,
+    unsigned long long dst_y_ptr,
+    unsigned long long dst_uv_ptr,
+    int width,
+    int height,
+    int dst_pitch,
+    void* cuda_context)
+{
+    CUcontext ctx = (CUcontext)cuda_context;
+    cuCtxSetCurrent(ctx);
 
-    // GPU 内存版本：RGBA 和 NV12 都在 GPU 上
-    cudaError_t ConvertRgbaToNv12_GPU(
-        const uint8_t* d_rgba,    // GPU 上的 RGBA 数据
-        uint8_t* d_nv12,          // GPU 上的 NV12 输出
-        int width,
-        int height,
-        cudaStream_t stream = 0)
-    {
-        uint8_t* yPlane = d_nv12;
-        uint8_t* uvPlane = d_nv12 + width * height;
-
-        dim3 block(16, 16);
-        dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
-
-        RgbaToNv12KernelOptimized << <grid, block, 0, stream >> > (
-            d_rgba, yPlane, uvPlane, width, height
-            );
-
-        return cudaGetLastError();
+    if (!InitKernel(ctx)) {
+        printf("  [ERROR] Failed to initialize kernel\n");
+        return;
     }
 
-    // CPU→GPU 版本：RGBA 在 CPU，转换后 NV12 在 GPU
-    cudaError_t ConvertRgbaToNv12_HostToDevice(
-        const uint8_t* h_rgba,    // CPU 上的 RGBA 数据
-        uint8_t* d_nv12,          // GPU 上的 NV12 输出
-        uint8_t* d_rgba_temp,     // GPU 临时缓冲区（需预先分配）
-        int width,
-        int height,
-        cudaStream_t stream = 0)
-    {
-        size_t rgbaSize = width * height * 4;
+    void* args[] = {
+        &d_rgba,
+        &dst_y_ptr,
+        &dst_uv_ptr,
+        &width,
+        &height,
+        &dst_pitch
+    };
 
-        // 上传 RGBA 到 GPU
-        cudaError_t err = cudaMemcpyAsync(d_rgba_temp, h_rgba, rgbaSize,
-            cudaMemcpyHostToDevice, stream);
-        if (err != cudaSuccess) return err;
+    unsigned int blockX = 16;
+    unsigned int blockY = 16;
+    unsigned int gridX = (width + blockX - 1) / blockX;
+    unsigned int gridY = (height + blockY - 1) / blockY;
 
-        // GPU 上转换
-        return ConvertRgbaToNv12_GPU(d_rgba_temp, d_nv12, width, height, stream);
+    CUresult result = cuLaunchKernel(
+        g_kernel,
+        gridX, gridY, 1,
+        blockX, blockY, 1,
+        0,
+        nullptr,
+        args,
+        nullptr
+    );
+
+    if (result != CUDA_SUCCESS) {
+        printf("  [ERROR] cuLaunchKernel failed: %d\n", result);
+        return;
     }
 
-}  // extern "C"
+    cuCtxSynchronize();
+}
+
+extern "C" void CleanupRGBAtoNV12()
+{
+    if (g_module) {
+        cuModuleUnload(g_module);
+        g_module = nullptr;
+        g_kernel = nullptr;
+        g_initialized = false;
+    }
+}
