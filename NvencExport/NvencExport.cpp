@@ -9,12 +9,9 @@
 #include <string>
 #include <algorithm>
 
-// 用绝对路径测试
 #include "D:/Video_Codec_SDK_13.0.37/Samples/NvCodec/NvEncoder/NvEncoderCuda.h"
 #include "D:/Video_Codec_SDK_13.0.37/Samples/NvCodec/NvEncoder/NvEncoderD3D11.h"
-// ============================================
-// 辅助类：管理输出文件
-// ============================================
+
 class BitstreamWriter {
 public:
     BitstreamWriter(const char* path) {
@@ -38,7 +35,7 @@ private:
 };
 
 // ============================================
-// 辅助函数：RGBA 转 NV12
+// RGBA 转 NV12
 // ============================================
 inline uint8_t ClampByte(int value) {
     if (value < 0) return 0;
@@ -73,7 +70,7 @@ void ConvertRGBAtoNV12_CPU(const uint8_t* rgba, uint8_t* nv12, int width, int he
 }
 
 // ============================================
-// 任务一：RGBA 数组编码
+//RGBA 数组编码
 // ============================================
 extern "C" NVENC_API int EncodeRGBAToH264(
     const char* rgba_frames[],
@@ -207,10 +204,10 @@ extern "C" NVENC_API int EncodeRGBAToH264(
 }
 
 // ============================================
-// 任务二：D3D11 纹理流式编码
+// ：D3D11 纹理流式编码
 // ============================================
 
-// 全局状态（用于跨调用保持编码器状态）
+
 static NvEncoderD3D11* g_d3d11Encoder = nullptr;
 static BitstreamWriter* g_d3d11Writer = nullptr;
 static ID3D11Device* g_d3d11Device = nullptr;
@@ -227,15 +224,13 @@ extern "C" NVENC_API int EncodeD3D11Texture(
     std::lock_guard<std::mutex> lock(g_d3d11Mutex);
 
     try {
-        // ========================================
-        // flag=true 且编码器未初始化：开始新的编码会话
-        // ========================================
+       
         if (flag && g_d3d11Encoder == nullptr) {
             if (!texture || !out_file_path) {
                 return -1;
             }
 
-            // 从纹理获取设备
+            
             texture->GetDevice(&g_d3d11Device);
             if (!g_d3d11Device) {
                 return -2;
@@ -248,13 +243,11 @@ extern "C" NVENC_API int EncodeD3D11Texture(
                 return -3;
             }
 
-            // 获取纹理尺寸
             D3D11_TEXTURE2D_DESC desc;
             texture->GetDesc(&desc);
             g_width = desc.Width;
             g_height = desc.Height;
 
-            // 创建编码器
             g_d3d11Encoder = new NvEncoderD3D11(
                 g_d3d11Device,
                 g_width,
@@ -262,7 +255,7 @@ extern "C" NVENC_API int EncodeD3D11Texture(
                 NV_ENC_BUFFER_FORMAT_NV12
             );
 
-            // 配置编码参数
+          
             NV_ENC_INITIALIZE_PARAMS initializeParams = { NV_ENC_INITIALIZE_PARAMS_VER };
             NV_ENC_CONFIG encodeConfig = { NV_ENC_CONFIG_VER };
             initializeParams.encodeConfig = &encodeConfig;
@@ -284,7 +277,7 @@ extern "C" NVENC_API int EncodeD3D11Texture(
 
             g_d3d11Encoder->CreateEncoder(&initializeParams);
 
-            // 打开输出文件
+           
             g_d3d11Writer = new BitstreamWriter(out_file_path);
             if (!g_d3d11Writer->IsOpen()) {
                 g_d3d11Encoder->DestroyEncoder();
@@ -304,21 +297,17 @@ extern "C" NVENC_API int EncodeD3D11Texture(
         // flag=true 且有纹理：编码一帧
         // ========================================
         if (flag && g_d3d11Encoder && texture) {
-            // 获取编码器的输入帧
             const NvEncInputFrame* inputFrame = g_d3d11Encoder->GetNextInputFrame();
 
-            // 获取输入纹理（编码器内部缓冲区）
             ID3D11Texture2D* encoderInputTexture =
                 reinterpret_cast<ID3D11Texture2D*>(inputFrame->inputPtr);
 
-            // 将输入纹理复制到编码器缓冲区
             g_d3d11Context->CopyResource(encoderInputTexture, texture);
 
-            // 编码
             std::vector<NvEncOutputFrame> vPacket;
             g_d3d11Encoder->EncodeFrame(vPacket);
 
-            // 写入输出
+            
             for (const auto& packet : vPacket) {
                 g_d3d11Writer->Write(packet.frame);
             }
@@ -328,7 +317,7 @@ extern "C" NVENC_API int EncodeD3D11Texture(
         // flag=false：结束编码，清理资源
         // ========================================
         if (!flag && g_d3d11Encoder) {
-            // 刷新编码器
+           
             std::vector<NvEncOutputFrame> vPacket;
             g_d3d11Encoder->EndEncode(vPacket);
 
@@ -337,7 +326,6 @@ extern "C" NVENC_API int EncodeD3D11Texture(
                 g_d3d11Writer->Write(packet.frame);
             }
 
-            // 清理资源
             g_d3d11Encoder->DestroyEncoder();
             delete g_d3d11Encoder;
             g_d3d11Encoder = nullptr;
@@ -362,7 +350,6 @@ extern "C" NVENC_API int EncodeD3D11Texture(
         return 0;
     }
     catch (const std::exception& e) {
-        // 异常处理：清理所有资源
         if (g_d3d11Encoder) {
             g_d3d11Encoder->DestroyEncoder();
             delete g_d3d11Encoder;

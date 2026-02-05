@@ -9,13 +9,22 @@
 
 using Microsoft::WRL::ComPtr;
 
-// 直接声明导入函数
+// 任务一接口（批量编码）
+extern "C" __declspec(dllimport) int EncodeRGBAToH264(
+    const char* rgba_frames[],
+    int arr_size,
+    const char* out_file_path
+);
+
+// 任务二接口（流式编码）
 extern "C" __declspec(dllimport) int EncodeD3D11Texture(
     ID3D11Texture2D * texture,
     const char* out_file_path,
-    bool flag);
+    bool flag
+);
 
-// 创建 D3D11 设备和上下文
+// ==================== D3D11 辅助函数 ====================
+
 bool CreateD3D11Device(ComPtr<ID3D11Device>& device, ComPtr<ID3D11DeviceContext>& context)
 {
     D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
@@ -35,18 +44,14 @@ bool CreateD3D11Device(ComPtr<ID3D11Device>& device, ComPtr<ID3D11DeviceContext>
     );
 
     if (FAILED(hr)) {
-        std::cerr << "D3D11CreateDevice failed: 0x" << std::hex << hr << std::endl;
+        std::cerr << "D3D11CreateDevice failed: 0x" << std::hex << hr << std::dec << std::endl;
         return false;
     }
 
     return true;
 }
 
-// 创建 NV12 纹理
-ComPtr<ID3D11Texture2D> CreateNV12Texture(
-    ID3D11Device* device,
-    int width,
-    int height)
+ComPtr<ID3D11Texture2D> CreateNV12Texture(ID3D11Device* device, int width, int height)
 {
     D3D11_TEXTURE2D_DESC desc = {};
     desc.Width = width;
@@ -65,18 +70,14 @@ ComPtr<ID3D11Texture2D> CreateNV12Texture(
     HRESULT hr = device->CreateTexture2D(&desc, nullptr, &texture);
 
     if (FAILED(hr)) {
-        std::cerr << "CreateTexture2D (NV12) failed: 0x" << std::hex << hr << std::endl;
+        std::cerr << "CreateTexture2D (NV12) failed: 0x" << std::hex << hr << std::dec << std::endl;
         return nullptr;
     }
 
     return texture;
 }
 
-// 创建 Staging 纹理（用于 CPU 写入）
-ComPtr<ID3D11Texture2D> CreateStagingTexture(
-    ID3D11Device* device,
-    int width,
-    int height)
+ComPtr<ID3D11Texture2D> CreateStagingTexture(ID3D11Device* device, int width, int height)
 {
     D3D11_TEXTURE2D_DESC desc = {};
     desc.Width = width;
@@ -95,14 +96,13 @@ ComPtr<ID3D11Texture2D> CreateStagingTexture(
     HRESULT hr = device->CreateTexture2D(&desc, nullptr, &texture);
 
     if (FAILED(hr)) {
-        std::cerr << "CreateTexture2D (Staging) failed: 0x" << std::hex << hr << std::endl;
+        std::cerr << "CreateTexture2D (Staging) failed: 0x" << std::hex << hr << std::dec << std::endl;
         return nullptr;
     }
 
     return texture;
 }
 
-// 生成测试 NV12 数据（渐变动画）
 void GenerateNV12Frame(
     std::vector<uint8_t>& yPlane,
     std::vector<uint8_t>& uvPlane,
@@ -129,7 +129,6 @@ void GenerateNV12Frame(
     }
 }
 
-// 将 NV12 数据写入 Staging 纹理
 bool WriteNV12ToStagingTexture(
     ID3D11DeviceContext* context,
     ID3D11Texture2D* stagingTexture,
@@ -142,7 +141,7 @@ bool WriteNV12ToStagingTexture(
     HRESULT hr = context->Map(stagingTexture, 0, D3D11_MAP_WRITE, 0, &mapped);
 
     if (FAILED(hr)) {
-        std::cerr << "Map staging texture failed: 0x" << std::hex << hr << std::endl;
+        std::cerr << "Map staging texture failed: 0x" << std::hex << hr << std::dec << std::endl;
         return false;
     }
 
@@ -163,9 +162,74 @@ bool WriteNV12ToStagingTexture(
     return true;
 }
 
-int main()
+// ==================== 任务一：RGBA 批量编码测试 ====================
+
+int TestTask1_RGBA()
 {
-    std::cout << "=== Task 2 Test: D3D11 NV12 Texture Encoding ===" << std::endl;
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "=== Task 1: RGBA Array Batch Encoding ===" << std::endl;
+    std::cout << "========================================\n" << std::endl;
+
+    const int width = 800;
+    const int height = 600;
+    const int frameCount = 60;  // 最多100帧
+    const char* outputPath = "output_rgba.h264";
+
+    std::cout << "Output file: " << outputPath << std::endl;
+    std::cout << "Resolution: " << width << "x" << height << std::endl;
+    std::cout << "Frame count: " << frameCount << std::endl;
+    std::cout << std::endl;
+
+    std::vector<std::vector<uint8_t>> frameBuffers(frameCount);
+    std::vector<const char*> framePtrs(frameCount);
+
+    std::cout << "Generating " << frameCount << " RGBA frames..." << std::endl;
+
+    for (int i = 0; i < frameCount; i++) {
+        frameBuffers[i].resize(width * height * 4);
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int idx = (y * width + x) * 4;
+                frameBuffers[i][idx + 0] = static_cast<uint8_t>((x + i * 3) % 256);      // R
+                frameBuffers[i][idx + 1] = static_cast<uint8_t>((y + i * 2) % 256);      // G
+                frameBuffers[i][idx + 2] = static_cast<uint8_t>((x + y + i * 4) % 256);  // B
+                frameBuffers[i][idx + 3] = 255;                                           // A
+            }
+        }
+
+        framePtrs[i] = reinterpret_cast<const char*>(frameBuffers[i].data());
+
+        if ((i + 1) % 20 == 0) {
+            std::cout << "Generated frame " << (i + 1) << "/" << frameCount << std::endl;
+        }
+    }
+
+    std::cout << "All frames generated. Starting encoding..." << std::endl;
+
+    int result = EncodeRGBAToH264(framePtrs.data(), frameCount, outputPath);
+
+    if (result == 0) {
+        std::cout << std::endl;
+        std::cout << "=== Task 1 completed successfully! ===" << std::endl;
+        std::cout << "Output file: " << outputPath << std::endl;
+        std::cout << "Verify: ffplay " << outputPath << std::endl;
+    }
+    else {
+        std::cerr << "=== Task 1 failed with error: " << result << " ===" << std::endl;
+        std::cerr << "Error codes: -1=invalid params, -2=cuInit, -3=cuDeviceGet, -4=cuContext, -5=file open, -100=exception" << std::endl;
+    }
+
+    return result;
+}
+
+// ==================== 任务二：D3D11 纹理编码测试 ====================
+
+int TestTask2_D3D11()
+{
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "=== Task 2: D3D11 NV12 Texture Encoding ===" << std::endl;
+    std::cout << "========================================\n" << std::endl;
 
     const int width = 800;
     const int height = 600;
@@ -195,10 +259,11 @@ int main()
     std::vector<uint8_t> yPlane(width * height);
     std::vector<uint8_t> uvPlane(width * height / 2);
 
-    std::cout << "Starting encoding..." << std::endl;
+    std::cout << std::endl;
     std::cout << "Output file: " << outputPath << std::endl;
     std::cout << "Resolution: " << width << "x" << height << std::endl;
     std::cout << "Frame count: " << frameCount << std::endl;
+    std::cout << std::endl;
 
     int result = 0;
 
@@ -244,16 +309,64 @@ int main()
 
     if (result == 0) {
         std::cout << std::endl;
-        std::cout << "=== Encoding completed successfully! ===" << std::endl;
+        std::cout << "=== Task 2 completed successfully! ===" << std::endl;
         std::cout << "Output file: " << outputPath << std::endl;
-        std::cout << std::endl;
-        std::cout << "To verify, run:" << std::endl;
-        std::cout << "  ffplay " << outputPath << std::endl;
+        std::cout << "Verify: ffplay " << outputPath << std::endl;
     }
     else {
-        std::cerr << std::endl;
-        std::cerr << "=== Encoding failed with error: " << result << " ===" << std::endl;
+        std::cerr << "=== Task 2 failed with error: " << result << " ===" << std::endl;
     }
 
     return result;
+}
+
+
+int main(int argc, char* argv[])
+{
+    std::cout << "========================================" << std::endl;
+    std::cout << "  NVENC Encoding Test Program" << std::endl;
+    std::cout << "========================================" << std::endl;
+
+    int testMode = 0; // 0 = both, 1 = task1 only, 2 = task2 only
+
+    if (argc > 1) {
+        testMode = atoi(argv[1]);
+    }
+
+    std::cout << "\nUsage: TestApp.exe [mode]" << std::endl;
+    std::cout << "  0 = Run both tasks (default)" << std::endl;
+    std::cout << "  1 = Run Task 1 only (RGBA batch)" << std::endl;
+    std::cout << "  2 = Run Task 2 only (D3D11 stream)" << std::endl;
+    std::cout << "\nCurrent mode: " << testMode << std::endl;
+
+    int result1 = 0, result2 = 0;
+
+    if (testMode == 0 || testMode == 1) {
+        result1 = TestTask1_RGBA();
+    }
+
+    if (testMode == 0 || testMode == 2) {
+        result2 = TestTask2_D3D11();
+    }
+
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "  Test Summary" << std::endl;
+    std::cout << "========================================" << std::endl;
+
+    if (testMode == 0 || testMode == 1) {
+        std::cout << "Task 1 (RGBA batch):  " << (result1 == 0 ? "PASSED" : "FAILED") << std::endl;
+    }
+    if (testMode == 0 || testMode == 2) {
+        std::cout << "Task 2 (D3D11 stream): " << (result2 == 0 ? "PASSED" : "FAILED") << std::endl;
+    }
+
+    std::cout << std::endl;
+    if (result1 == 0 && (testMode == 0 || testMode == 1)) {
+        std::cout << "Task 1 output: output_rgba.h264" << std::endl;
+    }
+    if (result2 == 0 && (testMode == 0 || testMode == 2)) {
+        std::cout << "Task 2 output: output_d3d11.h264" << std::endl;
+    }
+
+    return (result1 != 0 || result2 != 0) ? -1 : 0;
 }
