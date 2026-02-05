@@ -1,13 +1,14 @@
 #include "pch.h"
 #include "NvencExport.h"
+#include "RgbaToNv12.h"
 
 #include <cuda.h>
+#include <cuda_runtime.h>
 #include <d3d11.h>
 #include <fstream>
 #include <vector>
 #include <mutex>
 #include <string>
-#include <algorithm>
 
 #include "D:/Video_Codec_SDK_13.0.37/Samples/NvCodec/NvEncoder/NvEncoderCuda.h"
 #include "D:/Video_Codec_SDK_13.0.37/Samples/NvCodec/NvEncoder/NvEncoderD3D11.h"
@@ -72,6 +73,9 @@ void ConvertRGBAtoNV12_CPU(const uint8_t* rgba, uint8_t* nv12, int width, int he
 // ============================================
 //RGBA �������
 // ============================================
+// ============================================
+// RGBA 数组编码（使用 CUDA Driver API）
+// ============================================
 extern "C" NVENC_API int EncodeRGBAToH264(
     const char* rgba_frames[],
     int arr_size,
@@ -90,7 +94,12 @@ extern "C" NVENC_API int EncodeRGBAToH264(
     NvEncoderCuda* encoder = nullptr;
     bool primaryCtxRetained = false;
 
+    // GPU 缓冲区（使用 Driver API）
+    CUdeviceptr d_rgba = 0;
+    CUdeviceptr d_nv12 = 0;
+
     try {
+        // 初始化 CUDA
         CUresult cuResult = cuInit(0);
         if (cuResult != CUDA_SUCCESS) {
             return -2;
@@ -113,6 +122,24 @@ extern "C" NVENC_API int EncodeRGBAToH264(
             return -4;
         }
 
+        // 使用 Driver API 分配 GPU 内存
+        size_t rgbaSize = width * height * 4;
+        size_t nv12Size = width * height * 3 / 2;
+
+        cuResult = cuMemAlloc(&d_rgba, rgbaSize);
+        if (cuResult != CUDA_SUCCESS) {
+            cuDevicePrimaryCtxRelease(cuDevice);
+            return -6;
+        }
+
+        cuResult = cuMemAlloc(&d_nv12, nv12Size);
+        if (cuResult != CUDA_SUCCESS) {
+            cuMemFree(d_rgba);
+            cuDevicePrimaryCtxRelease(cuDevice);
+            return -6;
+        }
+
+        // 创建编码器
         encoder = new NvEncoderCuda(cuContext, width, height, NV_ENC_BUFFER_FORMAT_NV12);
 
         NV_ENC_INITIALIZE_PARAMS initializeParams = { NV_ENC_INITIALIZE_PARAMS_VER };
@@ -136,28 +163,34 @@ extern "C" NVENC_API int EncodeRGBAToH264(
 
         encoder->CreateEncoder(&initializeParams);
 
+        // 打开输出文件
         BitstreamWriter writer(out_file_path);
         if (!writer.IsOpen()) {
             encoder->DestroyEncoder();
             delete encoder;
+            cuMemFree(d_rgba);
+            cuMemFree(d_nv12);
             cuDevicePrimaryCtxRelease(cuDevice);
             return -5;
         }
 
-        size_t nv12Size = width * height * 3 / 2;
+        // CPU 端 NV12 缓冲区
         std::vector<uint8_t> nv12Buffer(nv12Size);
-
         std::vector<NvEncOutputFrame> vPacket;
 
+        // 编码每一帧
         for (int i = 0; i < arr_size; i++) {
+            // CPU 端转换 RGBA → NV12
             ConvertRGBAtoNV12_CPU(
                 reinterpret_cast<const uint8_t*>(rgba_frames[i]),
                 nv12Buffer.data(),
                 width, height
             );
 
+            // 获取编码器输入帧
             const NvEncInputFrame* inputFrame = encoder->GetNextInputFrame();
 
+            // 使用 NvEncoderCuda 的静态方法复制数据
             NvEncoderCuda::CopyToDeviceFrame(
                 cuContext,
                 nv12Buffer.data(),
@@ -172,6 +205,7 @@ extern "C" NVENC_API int EncodeRGBAToH264(
                 inputFrame->numChromaPlanes
             );
 
+            // 编码
             encoder->EncodeFrame(vPacket);
 
             for (const auto& packet : vPacket) {
@@ -180,13 +214,17 @@ extern "C" NVENC_API int EncodeRGBAToH264(
             vPacket.clear();
         }
 
+        // 刷新编码器
         encoder->EndEncode(vPacket);
         for (const auto& packet : vPacket) {
             writer.Write(packet.frame);
         }
 
+        // 清理
         encoder->DestroyEncoder();
         delete encoder;
+        cuMemFree(d_rgba);
+        cuMemFree(d_nv12);
         cuDevicePrimaryCtxRelease(cuDevice);
 
         return 0;
@@ -196,12 +234,15 @@ extern "C" NVENC_API int EncodeRGBAToH264(
             encoder->DestroyEncoder();
             delete encoder;
         }
+        if (d_rgba) cuMemFree(d_rgba);
+        if (d_nv12) cuMemFree(d_nv12);
         if (primaryCtxRetained) {
             cuDevicePrimaryCtxRelease(cuDevice);
         }
         return -100;
     }
 }
+
 
 // ============================================
 // ��D3D11 ������ʽ����
