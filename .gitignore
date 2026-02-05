@@ -1,0 +1,20 @@
+﻿# 编译中间文件
+*.obj
+*.pdb
+*.ilk
+*.log
+*.tlog/
+*.idb
+*.ipdb
+*.iobj
+Debug/
+Release/
+*.vcxproj.user
+.vs/
+
+# 保留 x64/Debug 下的 dll/lib/exe
+!x64/
+!x64/Debug/
+!x64/Debug/*.dll
+!x64/Debug/*.lib
+!x64/Debug/*.exe
