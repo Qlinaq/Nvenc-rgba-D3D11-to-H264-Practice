@@ -56,6 +56,35 @@ EncodeD3D11Texture(nullptr, nullptr, false);        // 结束编码
 | `cuda` | GPU (CUDA) 进行 RGBA→NV12 转换 |
 
 ---
+## CUDA branch
+PTX 兼容性问题
+CUDA 分支使用 Parallel Thread Execution 内联代码实现 RGBA→NV12 转换。
+
+不同 GPU 架构需要对应的 PTX 版本：
+
+|GPU 系列 |	架构 |	PTX target |
+|------|------|------|
+|RTX 20 系列|	Turing|	sm_75|
+|RTX 30 系列|	Ampere|	sm_86|
+|RTX 40 系列|	Ada Lovelace|	sm_89|
+
+如果遇到 `cuModuleLoadData failed: 218` 错误，说明 PTX 版本与 GPU 不兼容。
+
+解决方案：修改 `RgbaToNv12.cu` 中的 PTX 头部：
+
+### PTX
+ RTX 40 系列 (当前 RTX 4060)
+- .version 8.0
+- .target sm_89
+
+RTX 30 系列
+- .version 7.0
+- .target sm_86
+
+RTX 20 系列 
+- .version 6.4
+- .target sm_75
+---
 
 ## 依赖
 
@@ -63,7 +92,7 @@ EncodeD3D11Texture(nullptr, nullptr, false);        // 结束编码
 - NVIDIA Video Codec SDK 13.0
 - CUDA Toolkit
 - Windows SDK (D3D11)
-- NVIDIA GPU (支持 NVENC)
+- NVIDIA 4060 GPU (支持 NVENC)
 
 ---
 
@@ -84,20 +113,6 @@ NvencExport/
 
 ---
 
-## 错误码
-
-| 代码 | 说明 |
-|------|------|
-| 0 | 成功 |
-| -1 | 参数无效 |
-| -2 | cuInit 失败 |
-| -3 | cuDeviceGet 失败 |
-| -4 | CUDA 上下文创建失败 |
-| -5 | 文件打开失败 |
-| -6 | GPU 内存分配失败 |
-| -100 | 异常 |
-
----
 
 ## 验证输出
 
