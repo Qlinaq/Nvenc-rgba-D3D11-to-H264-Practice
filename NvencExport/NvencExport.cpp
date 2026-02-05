@@ -61,7 +61,7 @@ void ConvertRGBAtoNV12_CPU(const uint8_t* rgba, uint8_t* nv12, int width, int he
                 int U = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
                 int V = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
 
-                int uvIdx = (y / 2) * width + x;
+                int uvIdx = (y / 2) * width + (x / 2) * 2;
                 uvPlane[uvIdx + 0] = ClampByte(U);
                 uvPlane[uvIdx + 1] = ClampByte(V);
             }
@@ -70,7 +70,7 @@ void ConvertRGBAtoNV12_CPU(const uint8_t* rgba, uint8_t* nv12, int width, int he
 }
 
 // ============================================
-//RGBA Êý×é±àÂë
+//RGBA ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 // ============================================
 extern "C" NVENC_API int EncodeRGBAToH264(
     const char* rgba_frames[],
@@ -204,7 +204,7 @@ extern "C" NVENC_API int EncodeRGBAToH264(
 }
 
 // ============================================
-// £ºD3D11 ÎÆÀíÁ÷Ê½±àÂë
+// ï¿½ï¿½D3D11 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê½ï¿½ï¿½ï¿½ï¿½
 // ============================================
 
 
@@ -294,7 +294,7 @@ extern "C" NVENC_API int EncodeD3D11Texture(
         }
 
         // ========================================
-        // flag=true ÇÒÓÐÎÆÀí£º±àÂëÒ»Ö¡
+        // flag=true ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»Ö¡
         // ========================================
         if (flag && g_d3d11Encoder && texture) {
             const NvEncInputFrame* inputFrame = g_d3d11Encoder->GetNextInputFrame();
@@ -314,14 +314,14 @@ extern "C" NVENC_API int EncodeD3D11Texture(
         }
 
         // ========================================
-        // flag=false£º½áÊø±àÂë£¬ÇåÀí×ÊÔ´
+        // flag=falseï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ë£¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô´
         // ========================================
         if (!flag && g_d3d11Encoder) {
            
             std::vector<NvEncOutputFrame> vPacket;
             g_d3d11Encoder->EndEncode(vPacket);
 
-            // Ð´ÈëÊ£ÓàÊý¾Ý
+            // Ð´ï¿½ï¿½Ê£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             for (const auto& packet : vPacket) {
                 g_d3d11Writer->Write(packet.frame);
             }
