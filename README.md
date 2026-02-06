@@ -60,13 +60,7 @@ EncodeD3D11Texture(nullptr, nullptr, false);        // 结束编码
 PTX 兼容性问题
 CUDA 分支使用 Parallel Thread Execution 内联代码实现 RGBA→NV12 转换。
 
-不同 GPU 架构需要对应的 PTX 版本：
-
-|GPU 系列 |	架构 |	PTX target |
-|------|------|------|
-|RTX 20 系列|	Turing|	sm_75|
-|RTX 30 系列|	Ampere|	sm_86|
-|RTX 40 系列|	Ada Lovelace|	sm_89|
+不同 GPU 架构需要对应的 PTX 版本不同
 
 如果遇到 `cuModuleLoadData failed: 218` 错误，说明 PTX 版本与 GPU 不兼容。
 
