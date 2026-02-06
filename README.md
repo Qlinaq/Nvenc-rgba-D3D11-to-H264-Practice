@@ -57,7 +57,7 @@ EncodeD3D11Texture(nullptr, nullptr, false);        // 结束编码
 
 ---
 ## CUDA branch
-PTX 兼容性问题
+### PTX 兼容性问题
 CUDA 分支使用 Parallel Thread Execution 内联代码实现 RGBA→NV12 转换。
 
 不同 GPU 架构需要对应的 PTX 版本不同
